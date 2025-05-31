@@ -1,0 +1,106 @@
+services:
+  # --------------------------------------------------
+  # POSTGRES (Kong DB)
+  # --------------------------------------------------
+  postgres:
+    image: postgres:15
+    container_name: kong-db
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - kong-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  # --------------------------------------------------
+  # Kong Migrations
+  # --------------------------------------------------
+  kong-migrations:
+    image: kong/kong-gateway:3.9
+    container_name: kong-migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      KONG_DATABASE: ${KONG_DATABASE}
+      KONG_PG_HOST: ${KONG_PG_HOST}
+      KONG_PG_USER: ${KONG_PG_USER}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD}
+      KONG_PASSWORD: ${KONG_PASSWORD}
+    command: >
+      sh -c "
+        kong migrations bootstrap &&
+        echo '✅ Migrations successfully completed'
+      "
+    restart: "no"
+
+  # --------------------------------------------------
+  # Kong Gateway + Manager (RBAC)
+  # --------------------------------------------------
+  kong:
+    image: kong/kong-gateway:3.9
+    container_name: kong
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kong-migrations:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      KONG_DATABASE: ${KONG_DATABASE}
+      KONG_PG_HOST: ${KONG_PG_HOST}
+      KONG_PG_USER: ${KONG_PG_USER}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD}
+
+      # Admin / Manager
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ENFORCE_RBAC: "on"
+      KONG_ADMIN_GUI_AUTH: basic-auth
+      KONG_ADMIN_GUI_SESSION_CONF: |
+        {"secret":"${SESSION_SECRET}","storage":"kong","cookie_secure":false}
+
+      # Plugins
+      KONG_PLUGINS: ${KONG_PLUGINS}
+
+      # Licença Enterprise
+      KONG_LICENSE_DATA: ${KONG_LICENSE_DATA}
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 5s
+      retries: 10
+    ports:
+      - "8000:8000"   # Proxy HTTP
+      - "8443:8443"   # Proxy HTTPS
+      - "8001:8001"   # Admin API HTTP
+      - "8444:8444"   # Admin API HTTPS
+      - "8002:8002"   # Kong Manager UI
+
+  # --------------------------------------------------
+  # Fluent Bit (HTTP input + buffer em disco)
+  # --------------------------------------------------
+  fluentbit:
+    image: fluent/fluent-bit:1.8
+    container_name: fluentbit
+    depends_on:
+      - kong
+    volumes:
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf
+      - ./parsers.conf:/fluent-bit/etc/parsers.conf
+      - flb_buffer:/var/log/flb-storage
+    ports:
+      - "2020:2020"   # HTTP Input
+
+volumes:
+  kong-db-data:
+  flb_buffer:
