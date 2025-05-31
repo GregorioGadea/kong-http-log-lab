@@ -2,7 +2,7 @@ This project aims to setup a Kong Enterprise dev environment with http-log and f
 
 
 
-##Command to set-up http-log:
+Command to set-up http-log:
 
 ADMIN_URL="http://localhost:8001"
 TOKEN="admin123"
